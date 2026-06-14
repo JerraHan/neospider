@@ -3,7 +3,7 @@
 
 const axios = require('axios');
 const cheerio = require('cheerio');
-const { google } = require('googleapis');
+
 const fs = require('fs');
 const path = require('path');
 
@@ -224,7 +224,7 @@ async function updateGoogleSheets(alerts) {
   const SERVICE_ACCOUNT = process.env.GOOGLE_SERVICE_ACCOUNT;
   
   if (!SHEET_ID || !SERVICE_ACCOUNT) {
-    console.warn('  ⚠ Google Sheets 설정 없음 (로컬 저장만)\n');
+    console.warn('  ⚠ Google Sheets 설정 없음\n');
     return;
   }
   
@@ -233,38 +233,50 @@ async function updateGoogleSheets(alerts) {
       ? JSON.parse(SERVICE_ACCOUNT)
       : SERVICE_ACCOUNT;
     
-    const auth = new google.auth.GoogleAuth({
-      credentials,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets']
+    // JWT 토큰 생성
+    const payload = {
+      iss: credentials.client_email,
+      sub: credentials.client_email,
+      scope: 'https://www.googleapis.com/auth/spreadsheets',
+      aud: 'https://oauth2.googleapis.com/token',
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 3600
+    };
+    
+    const token = require('jsonwebtoken').sign(payload, credentials.private_key, { algorithm: 'RS256' });
+    
+    // Access token 발급받기
+    const tokenRes = await axios.post('https://oauth2.googleapis.com/token', {
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: token
     });
     
-    const sheets = google.sheets({ version: 'v4', auth });
+    const accessToken = tokenRes.data.access_token;
     
+    // Google Sheets API에 데이터 추가
     const allAlerts = [
       ...alerts.priority1,
       ...alerts.priority2,
       ...alerts.priority3
     ].sort((a, b) => a.priority - b.priority);
     
-    const values = [
-      ['시간', '우선순위', '유형', '제목', '종목/섹터', '언론사', '링크'],
-      ...allAlerts.map(alert => [
-        new Date().toLocaleTimeString('ko-KR'),
-        alert.priority,
-        alert.featured?.type || alert.notice?.type || 'news',
-        alert.title.substring(0, 50),
-        alert.ticker || alert.sector || '',
-        alert.source,
-        alert.link || ''
-      ])
-    ];
+    const values = allAlerts.map(alert => [
+      new Date().toLocaleTimeString('ko-KR'),
+      alert.priority,
+      alert.featured?.type || alert.notice?.type || 'news',
+      alert.title.substring(0, 50),
+      alert.ticker || alert.sector || '',
+      alert.source,
+      alert.link || ''
+    ]);
     
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SHEET_ID,
-      range: 'Real-time!A:G',
-      valueInputOption: 'USER_ENTERED',
-      resource: { values }
-    });
+    if (values.length > 0) {
+      await axios.post(
+        `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/Real-time!A:G:append?valueInputOption=USER_ENTERED`,
+        { values },
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+    }
     
     console.log('✓ Google Sheets 업데이트\n');
   } catch (error) {
