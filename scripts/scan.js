@@ -321,7 +321,7 @@ async function main() {
     const allNews = await scrapeNews();
     analyzeNews(allNews);
     await sendTelegramAlert(ALERTS);
-    await updateGoogleSheets(ALERTS);
+    //await updateGoogleSheets(ALERTS);
     saveLogs(ALERTS, allNews);
     
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
